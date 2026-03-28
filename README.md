@@ -139,7 +139,7 @@ GOOGLE_API_KEY="your_actual_key_here"
 
 ### Notes
 
-- `vectorstore/chroma` is already included in this repo, so the app can start without re-embedding.
+- `vectorstore/chroma` is not included in this repo, so you need to run the embedding file to regenerate the embeddings and store in the vector database
 - If you change PDFs in `Data/`, regenerate embeddings using Step 1 and push updated `vectorstore/chroma`.
 
 ---
