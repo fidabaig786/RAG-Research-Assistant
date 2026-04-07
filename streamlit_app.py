@@ -1,6 +1,8 @@
 import os
 import re
+import json
 from pathlib import Path
+from datetime import datetime
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -195,86 +197,298 @@ def load_db(persist_dir: str, embedding_model: str):
     return get_vectorstore(Path(persist_dir), embedding_model)
 
 
-def main():
-    st.set_page_config(page_title=" RAG Prototype", page_icon="📚", layout="wide")
-    st.title("RAG Prototype")
-    st.caption(f"Model: {CHAT_MODEL}")
+def get_chat_history_file():
+    """Get the path to the chat history JSON file."""
+    return Path("chat_history.json")
 
+
+def load_chat_history():
+    """Load chat history from file."""
+    history_file = get_chat_history_file()
+    if history_file.exists():
+        try:
+            with open(history_file, "r") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+
+def save_chat_history(history):
+    """Save chat history to file."""
+    history_file = get_chat_history_file()
+    with open(history_file, "w") as f:
+        json.dump(history, f, indent=2)
+
+
+def add_to_history(prompt: str, response: str, mode: str, sources: list):
+    """Add a new entry to chat history."""
+    history = load_chat_history()
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "prompt": prompt,
+        "response": response[:500],  # Store first 500 chars
+        "mode": mode,
+        "sources_count": len(sources)
+    }
+    history.append(entry)
+    # Keep only last 50 conversations
+    if len(history) > 50:
+        history = history[-50:]
+    save_chat_history(history)
+
+
+def init_session_state():
+    """Initialize session state variables."""
+    if "persist_dir" not in st.session_state:
+        st.session_state.persist_dir = "vectorstore/chroma"
+    if "embedding_model" not in st.session_state:
+        st.session_state.embedding_model = "models/gemini-embedding-001"
+    if "qa_top_k" not in st.session_state:
+        st.session_state.qa_top_k = 3
+    if "fact_top_k" not in st.session_state:
+        st.session_state.fact_top_k = 3
+    if "review_top_k" not in st.session_state:
+        st.session_state.review_top_k = 3
+
+
+def main():
+    st.set_page_config(
+        page_title="📚 Literature Assistant",
+        page_icon="📚",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Custom CSS for better UI
+    st.markdown("""
+    <style>
+        .main {
+            padding-top: 2rem;
+        }
+        .stTabs [data-baseweb="tab-list"] button {
+            font-size: 16px;
+            padding: 10px 20px;
+        }
+        .chat-message {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .chat-history-item {
+            padding: 0.75rem;
+            background-color: #f0f0f0;
+            border-radius: 0.4rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 3px solid #1f77b4;
+        }
+        .chat-history-item:hover {
+            background-color: #e8e8e8;
+            transform: translateX(5px);
+        }
+        h1 {
+            color: #1f77b4;
+            text-align: center;
+        }
+        .model-badge {
+            background-color: #e8f4f8;
+            border-left: 4px solid #1f77b4;
+            padding: 1rem;
+            border-radius: 0.4rem;
+            margin-bottom: 1.5rem;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    init_session_state()
+    
+    # Header
+    st.markdown("# 📚 Literature Assistant")
+    st.markdown("### RAG-powered Q&A, Fact-checking & Literature Review")
+    
     load_dotenv()
     if not os.getenv("GOOGLE_API_KEY"):
-        st.error("GOOGLE_API_KEY is missing. Add it to .env file.")
+        st.error("❌ GOOGLE_API_KEY is missing. Add it to .env file or set it in fly.io secrets.")
         st.stop()
 
+    # Sidebar - Chat History & Settings
     with st.sidebar:
-        st.header("Settings")
-        persist_dir = st.text_input("Vector store path", value="vectorstore/chroma")
-        embedding_model = st.text_input("Embedding model", value="models/gemini-embedding-001")
-        qa_top_k = st.number_input("Q&A top-k", min_value=1, max_value=20, value=3)
-        fact_top_k = st.number_input("Fact-check top-k", min_value=1, max_value=20, value=3)
-        review_top_k = st.number_input("Review top-k per item", min_value=1, max_value=20, value=3)
+        st.markdown("---")
+        
+        # Settings Section (Collapsible)
+        with st.expander("⚙️ Settings", expanded=False):
+            st.session_state.persist_dir = st.text_input(
+                "Vector store path",
+                value=st.session_state.persist_dir
+            )
+            st.session_state.embedding_model = st.text_input(
+                "Embedding model",
+                value=st.session_state.embedding_model
+            )
+            st.session_state.qa_top_k = st.slider("Q&A top-k", 1, 20, st.session_state.qa_top_k)
+            st.session_state.fact_top_k = st.slider("Fact-check top-k", 1, 20, st.session_state.fact_top_k)
+            st.session_state.review_top_k = st.slider("Review top-k", 1, 20, st.session_state.review_top_k)
+        
+        st.markdown("---")
+        
+        # Chat History Section
+        st.markdown("### 💬 Chat History")
+        
+        history = load_chat_history()
+        
+        if history:
+            if st.button("🗑️ Clear History", use_container_width=True):
+                save_chat_history([])
+                st.rerun()
+            
+            st.markdown("---")
+            
+            for i, entry in reversed(list(enumerate(history[-10:]))):  # Show last 10
+                timestamp = entry.get("timestamp", "")
+                prompt_text = entry.get("prompt", "")[:40]
+                mode = entry.get("mode", "ask")
+                
+                # Format timestamp
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    time_str = dt.strftime("%H:%M")
+                except:
+                    time_str = "N/A"
+                
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    if st.button(
+                        f"{mode.upper()} · {prompt_text}...",
+                        key=f"history_{i}",
+                        use_container_width=True
+                    ):
+                        st.session_state.selected_history = entry
+                        st.rerun()
+                with col2:
+                    st.caption(time_str)
+        else:
+            st.info("No chat history yet. Start a conversation!")
+
+    persist_dir = st.session_state.persist_dir
+    embedding_model = st.session_state.embedding_model
+    qa_top_k = st.session_state.qa_top_k
+    fact_top_k = st.session_state.fact_top_k
+    review_top_k = st.session_state.review_top_k
 
     if not Path(persist_dir).exists():
-        st.error(f"Vector store not found at: {persist_dir}")
+        st.error(f"❌ Vector store not found at: {persist_dir}")
         st.stop()
 
     db = load_db(persist_dir, embedding_model)
 
-    st.subheader("Single prompt (auto-routed)")
-    st.write("Enter one prompt. The app auto-detects question/fact-check/review.")
-    # st.write("Optional all-in-one format: `q: ... ; claim: ... ; review: ...`")
+    # Main content
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("### Enter Your Query")
+    with col2:
+        mode_info = st.selectbox(
+            "Mode",
+            ["Q&A", "Fact-Check", "Literature Review"],
+            label_visibility="collapsed"
+        )
 
-    user_prompt = st.text_area("Prompt", height=130, placeholder="Ask, verify a claim, or request a literature review...")
+    user_prompt = st.text_area(
+        "Your prompt",
+        height=120,
+        placeholder="💡 Ask a question, verify a claim, or request a literature review...",
+        label_visibility="collapsed"
+    )
 
-    if st.button("Run", type="primary"):
-        text = user_prompt.strip()
-        if not text:
-            st.warning("Please enter a prompt.")
-            st.stop()
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        submit_button = st.button("🚀 Submit", type="primary", use_container_width=True)
+    with col2:
+        clear_button = st.button("Clear", use_container_width=True)
+    
+    if clear_button:
+        st.session_state.user_prompt = ""
+        st.rerun()
 
-        q, claim_text, outline = parse_tagged_all_in_one(text)
-        ran = False
+    if submit_button and user_prompt.strip():
+        with st.spinner("🔍 Processing your query..."):
+            text = user_prompt.strip()
+            q, claim_text, outline = parse_tagged_all_in_one(text)
+            ran = False
 
-        if q:
-            answer, sources, used_model = run_qa(db, q, qa_top_k)
-            st.markdown("### Answer")
-            st.write(answer)
-            st.caption(f"Model used: {used_model}")
-            st.dataframe(source_table(sources), use_container_width=True)
-            ran = True
+            if q:
+                answer, sources, used_model = run_qa(db, q, qa_top_k)
+                add_to_history(q, answer, "qa", sources)
+                
+                st.markdown("---")
+                st.markdown("### 📖 Answer")
+                st.markdown(answer)
+                
+                with st.expander("📚 Sources"):
+                    st.dataframe(source_table(sources), use_container_width=True)
+                st.caption(f"🤖 Model: {used_model}")
+                ran = True
 
-        if claim_text:
-            report, sources, used_model = run_fact_check(db, claim_text, fact_top_k)
-            st.markdown("### Fact Check Report")
-            st.write(report)
-            st.caption(f"Model used: {used_model}")
-            st.dataframe(source_table(sources), use_container_width=True)
-            ran = True
+            if claim_text:
+                report, sources, used_model = run_fact_check(db, claim_text, fact_top_k)
+                add_to_history(claim_text, report, "fact-check", sources)
+                
+                st.markdown("---")
+                st.markdown("### ✅ Fact Check Report")
+                st.markdown(report)
+                
+                with st.expander("📚 Sources"):
+                    st.dataframe(source_table(sources), use_container_width=True)
+                st.caption(f"🤖 Model: {used_model}")
+                ran = True
 
-        if outline:
-            review, sources, used_model = run_lit_review(db, outline, review_top_k)
-            st.markdown("### Literature Review Draft")
-            st.write(review)
-            st.caption(f"Model used: {used_model}")
-            st.dataframe(source_table(sources), use_container_width=True)
-            ran = True
+            if outline:
+                review, sources, used_model = run_lit_review(db, outline, review_top_k)
+                add_to_history(outline, review, "literature-review", sources)
+                
+                st.markdown("---")
+                st.markdown("### 📝 Literature Review")
+                st.markdown(review)
+                
+                with st.expander("📚 Sources"):
+                    st.dataframe(source_table(sources), use_container_width=True)
+                st.caption(f"🤖 Model: {used_model}")
+                ran = True
 
-        if not ran:
-            intent = detect_intent(text)
-            if intent == "fact":
-                report, sources, used_model = run_fact_check(db, text, fact_top_k)
-                st.markdown("### Fact Check Report")
-                st.write(report)
-            elif intent == "review":
-                review, sources, used_model = run_lit_review(db, text, review_top_k)
-                st.markdown("### Literature Review Draft")
-                st.write(review)
-            else:
-                answer, sources, used_model = run_qa(db, text, qa_top_k)
-                st.markdown("### Answer")
-                st.write(answer)
+            if not ran:
+                intent = detect_intent(text)
+                
+                if intent == "fact":
+                    report, sources, used_model = run_fact_check(db, text, fact_top_k)
+                    add_to_history(text, report, "fact-check", sources)
+                    
+                    st.markdown("---")
+                    st.markdown("### ✅ Fact Check Report")
+                    st.markdown(report)
+                    
+                elif intent == "review":
+                    review, sources, used_model = run_lit_review(db, text, review_top_k)
+                    add_to_history(text, review, "literature-review", sources)
+                    
+                    st.markdown("---")
+                    st.markdown("### 📝 Literature Review")
+                    st.markdown(review)
+                    
+                else:
+                    answer, sources, used_model = run_qa(db, text, qa_top_k)
+                    add_to_history(text, answer, "qa", sources)
+                    
+                    st.markdown("---")
+                    st.markdown("### 📖 Answer")
+                    st.markdown(answer)
 
-            st.caption(f"Model used: {used_model}")
-            st.dataframe(source_table(sources), use_container_width=True)
+                with st.expander("📚 Sources"):
+                    st.dataframe(source_table(sources), use_container_width=True)
+                st.caption(f"🤖 Model: {used_model}")
+    
+    elif submit_button:
+        st.warning("⚠️ Please enter a prompt to continue.")
 
 
 if __name__ == "__main__":
