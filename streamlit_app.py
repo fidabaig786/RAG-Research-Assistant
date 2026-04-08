@@ -87,8 +87,8 @@ Context:
 """
 
 
-def run_qa(db, question: str, top_k: int):
-    docs = retrieve_docs(db, question, top_k=top_k)
+def run_qa(db, question: str, top_k: int, use_reranker: bool = False, use_mmr: bool = False):
+    docs = retrieve_docs(db, question, top_k=top_k, use_reranker=use_reranker, use_mmr=use_mmr)
     if not docs:
         return "No relevant chunks found.", [], CHAT_MODEL
 
@@ -100,8 +100,8 @@ def run_qa(db, question: str, top_k: int):
     return answer, sources, used_model
 
 
-def run_fact_check(db, text: str, top_k: int):
-    docs = retrieve_docs(db, text, top_k=top_k)
+def run_fact_check(db, text: str, top_k: int, use_reranker: bool = False, use_mmr: bool = False):
+    docs = retrieve_docs(db, text, top_k=top_k, use_reranker=use_reranker, use_mmr=use_mmr)
     if not docs:
         return "No relevant chunks found.", [], CHAT_MODEL
 
@@ -113,13 +113,13 @@ def run_fact_check(db, text: str, top_k: int):
     return report, sources, used_model
 
 
-def run_lit_review(db, outline: str, top_k_per_item: int):
+def run_lit_review(db, outline: str, top_k_per_item: int, use_reranker: bool = False, use_mmr: bool = False):
     outline_items = parse_outline(outline)
     collected = []
     seen = set()
 
     for item in outline_items:
-        docs = retrieve_docs(db, item, top_k=top_k_per_item)
+        docs = retrieve_docs(db, item, top_k=top_k_per_item, use_reranker=use_reranker, use_mmr=use_mmr)
         for doc in docs:
             source = doc.metadata.get("source", "unknown")
             page = doc.metadata.get("page", "unknown")
@@ -250,6 +250,10 @@ def init_session_state():
         st.session_state.fact_top_k = 3
     if "review_top_k" not in st.session_state:
         st.session_state.review_top_k = 3
+    if "use_reranker" not in st.session_state:
+        st.session_state.use_reranker = False
+    if "use_mmr" not in st.session_state:
+        st.session_state.use_mmr = False
 
 
 def main():
@@ -330,6 +334,19 @@ def main():
             st.session_state.qa_top_k = st.slider("Q&A top-k", 1, 20, st.session_state.qa_top_k)
             st.session_state.fact_top_k = st.slider("Fact-check top-k", 1, 20, st.session_state.fact_top_k)
             st.session_state.review_top_k = st.slider("Review top-k", 1, 20, st.session_state.review_top_k)
+            
+            st.markdown("---")
+            st.markdown("**Performance Options**")
+            st.session_state.use_reranker = st.checkbox(
+                "🚀 Enable LLM Reranker (slower but more accurate)",
+                value=st.session_state.use_reranker,
+                help="Uses Gemini to rerank results for higher precision"
+            )
+            st.session_state.use_mmr = st.checkbox(
+                "🔀 Enable MMR Search (slower but more diverse)",
+                value=st.session_state.use_mmr,
+                help="Uses Max Marginal Relevance for diverse results"
+            )
         
         st.markdown("---")
         
@@ -376,6 +393,8 @@ def main():
     qa_top_k = st.session_state.qa_top_k
     fact_top_k = st.session_state.fact_top_k
     review_top_k = st.session_state.review_top_k
+    use_reranker = st.session_state.use_reranker
+    use_mmr = st.session_state.use_mmr
 
     if not Path(persist_dir).exists():
         st.error(f"❌ Vector store not found at: {persist_dir}")
@@ -418,7 +437,7 @@ def main():
             ran = False
 
             if q:
-                answer, sources, used_model = run_qa(db, q, qa_top_k)
+                answer, sources, used_model = run_qa(db, q, qa_top_k, use_reranker=use_reranker, use_mmr=use_mmr)
                 add_to_history(q, answer, "qa", sources)
                 
                 st.markdown("---")
@@ -431,7 +450,7 @@ def main():
                 ran = True
 
             if claim_text:
-                report, sources, used_model = run_fact_check(db, claim_text, fact_top_k)
+                report, sources, used_model = run_fact_check(db, claim_text, fact_top_k, use_reranker=use_reranker, use_mmr=use_mmr)
                 add_to_history(claim_text, report, "fact-check", sources)
                 
                 st.markdown("---")
@@ -444,7 +463,7 @@ def main():
                 ran = True
 
             if outline:
-                review, sources, used_model = run_lit_review(db, outline, review_top_k)
+                review, sources, used_model = run_lit_review(db, outline, review_top_k, use_reranker=use_reranker, use_mmr=use_mmr)
                 add_to_history(outline, review, "literature-review", sources)
                 
                 st.markdown("---")
@@ -460,7 +479,7 @@ def main():
                 intent = detect_intent(text)
                 
                 if intent == "fact":
-                    report, sources, used_model = run_fact_check(db, text, fact_top_k)
+                    report, sources, used_model = run_fact_check(db, text, fact_top_k, use_reranker=use_reranker, use_mmr=use_mmr)
                     add_to_history(text, report, "fact-check", sources)
                     
                     st.markdown("---")
@@ -468,7 +487,7 @@ def main():
                     st.markdown(report)
                     
                 elif intent == "review":
-                    review, sources, used_model = run_lit_review(db, text, review_top_k)
+                    review, sources, used_model = run_lit_review(db, text, review_top_k, use_reranker=use_reranker, use_mmr=use_mmr)
                     add_to_history(text, review, "literature-review", sources)
                     
                     st.markdown("---")
@@ -476,7 +495,7 @@ def main():
                     st.markdown(review)
                     
                 else:
-                    answer, sources, used_model = run_qa(db, text, qa_top_k)
+                    answer, sources, used_model = run_qa(db, text, qa_top_k, use_reranker=use_reranker, use_mmr=use_mmr)
                     add_to_history(text, answer, "qa", sources)
                     
                     st.markdown("---")

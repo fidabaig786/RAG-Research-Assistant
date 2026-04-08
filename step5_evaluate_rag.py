@@ -14,7 +14,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 
 from retrieval import retrieve_docs
 
-CHAT_MODEL = "models/gemini-2.5-flash"
+CHAT_MODEL = "models/gemini-3.1-pro-preview"
 
 
 # -----------------------------
@@ -331,6 +331,7 @@ def evaluate(
     top_k: int,
     candidate_multiplier: int,
     disable_mmr: bool,
+    use_reranker: bool = True,
 ) -> Dict[str, Any]:
     per_sample: List[Dict[str, Any]] = []
 
@@ -342,6 +343,7 @@ def evaluate(
                 top_k=top_k,
                 candidate_multiplier=candidate_multiplier,
                 use_mmr=not disable_mmr,
+                use_reranker=use_reranker,
             )
         )
 
@@ -484,6 +486,11 @@ def main():
         action="store_true",
         help="Disable MMR candidate union during retrieval reranking.",
     )
+    parser.add_argument(
+        "--no-reranker",
+        action="store_true",
+        help="Disable LLM reranking during evaluation.",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -513,6 +520,7 @@ def main():
         top_k=args.top_k,
         candidate_multiplier=max(2, args.candidate_multiplier),
         disable_mmr=args.disable_mmr,
+        use_reranker=not args.no_reranker,
     )
 
     output_path = Path(args.output)

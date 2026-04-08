@@ -8,7 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 
 from retrieval import retrieve_docs
 
-CHAT_MODEL = "models/gemini-2.5-flash"
+CHAT_MODEL = "models/gemini-3.1-pro-preview"
 
 
 def normalize_model_name(model_name: str) -> str:

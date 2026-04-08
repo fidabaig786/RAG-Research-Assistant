@@ -8,7 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 
 from retrieval import retrieve_docs
 
-CHAT_MODEL = "models/gemini-2.5-flash"
+CHAT_MODEL = "models/gemini-3.1-pro-preview"
 
 
 def normalize_model_name(model_name: str) -> str:
@@ -73,8 +73,8 @@ def ask_model(prompt: str) -> str:
     return str(response.content)
 
 
-def run_single_query(db, question: str, top_k: int):
-    docs = retrieve_docs(db, question, top_k=top_k)
+def run_single_query(db, question: str, top_k: int, use_reranker: bool = True, reranker_strategy: str = "llm"):
+    docs = retrieve_docs(db, question, top_k=top_k, use_reranker=use_reranker, reranker_strategy=reranker_strategy)
     if not docs:
         print("No relevant chunks found.")
         return
@@ -101,6 +101,24 @@ def main():
         default="models/gemini-embedding-001",
         help="Gemini embedding model used when creating/querying vectors.",
     )
+    parser.add_argument(
+        "--use-reranker",
+        action="store_true",
+        default=True,
+        help="Disable reranking with --no-reranker.",
+    )
+    parser.add_argument(
+        "--no-reranker",
+        dest="use_reranker",
+        action="store_false",
+        help="Disable LLM-based reranking.",
+    )
+    parser.add_argument(
+        "--reranker-strategy",
+        default="llm",
+        choices=["llm"],
+        help="Reranking strategy (LLM-based).",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -114,7 +132,7 @@ def main():
     db = get_vectorstore(persist_dir, args.embedding_model)
 
     if args.question:
-        run_single_query(db, args.question, args.top_k)
+        run_single_query(db, args.question, args.top_k, args.use_reranker, args.reranker_strategy)
         return
 
     print("Interactive mode. Type your question and press Enter.")
@@ -128,7 +146,7 @@ def main():
             print("Goodbye.")
             break
 
-        run_single_query(db, question, args.top_k)
+        run_single_query(db, question, args.top_k, args.use_reranker, args.reranker_strategy)
         print("\n" + "-" * 60 + "\n")
 
 

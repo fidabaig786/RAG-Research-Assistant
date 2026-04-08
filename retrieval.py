@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from langchain_core.documents import Document
 
@@ -90,11 +90,13 @@ def retrieve_docs(
     db,
     query: str,
     top_k: int,
-    candidate_multiplier: int = 5,
-    use_mmr: bool = True,
+    candidate_multiplier: int = 2,
+    use_mmr: bool = False,
     min_combined_score: float = 0.38,
     relative_score_margin: float = 0.22,
     min_results: int = 2,
+    use_reranker: bool = False,
+    reranker_strategy: str = "llm",
 ) -> List[Document]:
     """
     Hybrid retrieval tuned for higher precision while keeping recall stable:
@@ -102,6 +104,7 @@ def retrieve_docs(
     2) Optionally union with MMR candidates for coverage.
     3) Re-rank by combined semantic + lexical score.
     4) Apply light source/page diversity during top-k selection.
+    5) Optionally use a dedicated reranker for final precision boost.
     """
     if top_k <= 0:
         return []
@@ -195,4 +198,13 @@ def retrieve_docs(
         source_page_counts[source_page] += 1
         selected.append(chosen["doc"])
 
+    # Optional: Apply reranker for final precision boost
+    if use_reranker and selected:
+        try:
+            from reranker import LLMReranker
+            reranker = LLMReranker()
+            selected = reranker.rerank(query, selected, top_k=top_k)
+        except Exception as e:
+            print(f"Warning: Reranker failed ({e}), using base results")
+    
     return selected
